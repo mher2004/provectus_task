@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-from database import ENGINE, init_db
+from src.database import ENGINE, init_db
 
 
 def parse_jsonl(path="data/raw/telemetry_logs.jsonl"):
