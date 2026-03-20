@@ -159,7 +159,7 @@ python3 generate_fake_data.py --num-users 100 --num-sessions 5000 --days 60 --ou
 | `--num-users` | 30 | Number of engineers |
 | `--num-sessions` | 500 | Total coding sessions |
 | `--days` | 30 | Time span in days |
-| `--output-dir` | `output` | Output directory |
+| `--output-dir` | `data/raw` | Output directory |
 | `--seed` | 42 | Random seed for reproducibility |
 
 This produces `data/raw/telemetry_logs.jsonl` (~50k+ events) and `data/raw/employees.csv`.
