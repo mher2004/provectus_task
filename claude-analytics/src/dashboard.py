@@ -1,5 +1,8 @@
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+from ml import forecast_cost, detect_anomalies
 from analytics import (
     load_data, cost_by_practice, daily_cost_trend,
     peak_usage_heatmap, tool_usage_stats, cost_by_level,
@@ -94,3 +97,76 @@ with col6:
     fig = px.pie(terminal_distribution(df), names="terminal_type",
                  values="count", hole=0.4)
     st.plotly_chart(fig, use_container_width=True)
+
+st.divider()
+st.header("Predictive analytics")
+
+# ── Forecast ──────────────────────────────────────────────────
+st.subheader("7-day cost forecast")
+forecast_df = forecast_cost(df, forecast_days=7)
+
+hist = forecast_df[~forecast_df["is_forecast"]]
+pred = forecast_df[forecast_df["is_forecast"]]
+
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=hist["date"], y=hist["cost_usd"],
+    mode="lines+markers", name="Historical",
+    line=dict(color="#378ADD", width=2),
+))
+fig.add_trace(go.Scatter(
+    x=pred["date"], y=pred["cost_usd"],
+    mode="lines+markers", name="Forecast",
+    line=dict(color="#EF9F27", width=2, dash="dash"),
+))
+fig.add_trace(go.Scatter(
+    x=pd.concat([pred["date"], pred["date"][::-1]]),
+    y=pd.concat([pred["upper"], pred["lower"][::-1]]),
+    fill="toself", fillcolor="rgba(239,159,39,0.15)",
+    line=dict(color="rgba(255,255,255,0)"),
+    name="95% confidence band",
+))
+fig.update_layout(hovermode="x unified")
+st.plotly_chart(fig, use_container_width=True)
+st.caption("Linear regression fitted on historical daily cost.\
+ Shaded band = 95% confidence interval.")
+
+# ── Anomaly detection ─────────────────────────────────────────
+st.subheader("Anomalous users — IsolationForest")
+anomaly_df = detect_anomalies(df)
+
+col_a, col_b = st.columns([1, 2])
+
+with col_a:
+    n_anomalies = anomaly_df["anomaly"].sum()
+    n_total = len(anomaly_df)
+    st.metric("Flagged users", f"{n_anomalies} / {n_total}")
+    st.caption("Contamination threshold: 8%")
+
+with col_b:
+    fig2 = px.scatter(
+        anomaly_df,
+        x="total_cost", y="request_count",
+        color="anomaly",
+        color_discrete_map={True: "#E24B4A", False: "#378ADD"},
+        hover_data=["user_email", "practice", "level", "anomaly_score"],
+        labels={"total_cost": "Total cost (USD)", "request_count": "API \
+requests"},
+        size="anomaly_score", size_max=20,
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+
+st.subheader("Flagged user details")
+flagged = anomaly_df[anomaly_df["anomaly"] == True][[
+    "user_email", "full_name", "practice", "level",
+    "total_cost", "request_count", "avg_duration", "anomaly_score"
+]].reset_index(drop=True)
+flagged.columns = ["Email", "Name", "Practice", "Level",
+                   "Total cost", "Requests", "Avg duration (ms)",
+                   "Anomaly score"]
+st.dataframe(flagged.style.format({
+    "Total cost": "${:.3f}",
+    "Avg duration (ms)": "{:.0f}",
+    "Anomaly score": "{:.3f}",
+}), use_container_width=True)

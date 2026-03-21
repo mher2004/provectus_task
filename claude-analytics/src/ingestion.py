@@ -1,6 +1,9 @@
 import json
 import pandas as pd
-from src.database import ENGINE, init_db
+try:
+    from src.database import ENGINE, init_db
+except ModuleNotFoundError:
+    from database import ENGINE, init_db
 
 
 def parse_jsonl(path="data/raw/telemetry_logs.jsonl"):

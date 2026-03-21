@@ -1,5 +1,8 @@
 import pandas as pd
-from database import ENGINE
+try:
+    from src.database import ENGINE
+except ModuleNotFoundError:
+    from database import ENGINE
 
 
 def load_data():
