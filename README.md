@@ -1,6 +1,6 @@
 # Claude Code Usage Analytics Platform
 
-An end-to-end analytics platform that ingests synthetic Claude Code telemetry data, stores it in a structured database, extracts actionable insights, and presents them through an interactive Streamlit dashboard.
+An end-to-end analytics platform that ingests synthetic Claude Code telemetry data, stores it in a structured database, extracts actionable insights, and presents them through an interactive Streamlit dashboard — with ML-powered forecasting, anomaly detection, and a REST API for programmatic access.
 
 ---
 
@@ -13,6 +13,8 @@ An end-to-end analytics platform that ingests synthetic Claude Code telemetry da
 - [Setup & Installation](#setup--installation)
 - [Running the Pipeline](#running-the-pipeline)
 - [Dashboard Features](#dashboard-features)
+- [REST API](#rest-api)
+- [ML & Predictive Analytics](#ml--predictive-analytics)
 - [LLM Usage Log](#llm-usage-log)
 - [Dependencies](#dependencies)
 
@@ -21,6 +23,10 @@ An end-to-end analytics platform that ingests synthetic Claude Code telemetry da
 ## Overview
 
 This platform processes telemetry data emitted by Claude Code sessions — Anthropic's CLI tool for AI-assisted software engineering. Raw event streams are ingested from CloudWatch-style JSONL batches, cleaned, stored in SQLite, and surfaced as interactive visualizations covering cost, token usage, tool behavior, and developer patterns across engineering practices and seniority levels.
+
+**Bonus features implemented:**
+- ML forecasting (7-day cost prediction with confidence intervals) and anomaly detection (IsolationForest)
+- REST API (FastAPI) with 6 endpoints and auto-generated Swagger documentation
 
 ---
 
@@ -35,9 +41,10 @@ Data Sources → Processing → Storage → Presentation
 | Layer | Components | Description |
 |---|---|---|
 | Data | `telemetry_logs.jsonl`, `employees.csv` | Raw synthetic telemetry and employee metadata |
-| Processing | `ingestion.py`, `analytics.py` | Parse, validate, clean, aggregate |
+| Processing | `ingestion.py`, `analytics.py`, `ml.py` | Parse, validate, clean, aggregate, forecast |
 | Storage | `analytics.db` (SQLite) | Two tables: `events` and `employees` |
-| Presentation | `dashboard.py` (Streamlit + Plotly) | Interactive charts with sidebar filters |
+| Presentation | `dashboard.py` (Streamlit + Plotly) | Interactive charts, forecasts, anomaly tables |
+| API | `api.py` (FastAPI + uvicorn) | 6 REST endpoints with Swagger UI |
 
 ---
 
@@ -57,6 +64,8 @@ claude-analytics/
 │   ├── database.py                # SQLAlchemy engine + schema definitions
 │   ├── ingestion.py               # JSONL/CSV parser → DB writer
 │   ├── analytics.py               # All aggregation and metric functions
+│   ├── ml.py                      # ML forecasting + anomaly detection
+│   ├── api.py                     # FastAPI REST application
 │   └── dashboard.py               # Streamlit app entry point
 │
 ├── generate_fake_data.py          # Provided synthetic data generator
@@ -131,8 +140,8 @@ Each line is a CloudWatch-style log batch containing multiple `logEvents`. Each 
 
 ```bash
 # 1. Clone the repository
-git clone <your-repo-url>
-cd claude-analytics
+git clone https://github.com/mher2004/provectus_task.git
+cd provectus_task/claude-analytics
 
 # 2. Create and activate a virtual environment
 python3 -m venv venv
@@ -146,7 +155,7 @@ pip install -r requirements.txt
 
 ## Running the Pipeline
 
-Run these steps in order.
+Run these steps in order from inside the `claude-analytics/` directory.
 
 ### Step 1 — Generate synthetic data
 
@@ -159,10 +168,10 @@ python3 generate_fake_data.py --num-users 100 --num-sessions 5000 --days 60 --ou
 | `--num-users` | 30 | Number of engineers |
 | `--num-sessions` | 500 | Total coding sessions |
 | `--days` | 30 | Time span in days |
-| `--output-dir` | `data/raw` | Output directory |
+| `--output-dir` | `output` | Output directory |
 | `--seed` | 42 | Random seed for reproducibility |
 
-This produces `data/raw/telemetry_logs.jsonl` (~50k+ events) and `data/raw/employees.csv`.
+Produces `data/raw/telemetry_logs.jsonl` (~50k+ events) and `data/raw/employees.csv`.
 
 ### Step 2 — Ingest data into SQLite
 
@@ -170,7 +179,7 @@ This produces `data/raw/telemetry_logs.jsonl` (~50k+ events) and `data/raw/emplo
 python3 -m src.ingestion
 ```
 
-This parses the JSONL batches, flattens the nested event structure, validates and cleans all fields, and writes two tables (`events` and `employees`) into `data/analytics.db`.
+Parses the JSONL batches, flattens the nested event structure, validates and cleans all fields, and writes two tables (`events` and `employees`) into `data/analytics.db`.
 
 Expected output:
 ```
@@ -184,13 +193,24 @@ Loaded 54832 events ({'claude_code.api_request': 18241, 'claude_code.tool_decisi
 streamlit run src/dashboard.py
 ```
 
-The dashboard opens at `http://localhost:8501`.
+Opens at `http://localhost:8501`.
+
+### Step 4 — Launch the REST API (separate terminal)
+
+```bash
+uvicorn src.api:app --reload --port 8001
+```
+
+API runs at `http://localhost:8001`.
+Interactive Swagger docs at `http://localhost:8001/docs`.
 
 ---
 
 ## Dashboard Features
 
-The dashboard provides the following views, all filtered interactively by engineering practice and seniority level via the sidebar.
+All charts are filtered interactively by engineering practice and seniority level via the sidebar.
+
+### Core analytics
 
 | Chart | Insight |
 |---|---|
@@ -203,6 +223,117 @@ The dashboard provides the following views, all filtered interactively by engine
 | Cost by seniority level | Whether senior engineers (L7+) use Claude differently |
 | Terminal distribution | IDE/terminal breakdown across engineers |
 
+### Predictive analytics (bonus)
+
+| Section | Description |
+|---|---|
+| 7-day cost forecast | Linear regression on historical daily cost with a 95% confidence band that widens with forecast horizon |
+| Anomalous users scatter plot | IsolationForest flags users whose cost/token/duration profile is unusual — bubble size encodes anomaly severity |
+| Flagged user details table | Sortable table showing email, practice, level, total cost, request count, avg duration, and anomaly score |
+
+---
+
+## REST API
+
+The FastAPI layer exposes all core analytics as JSON endpoints, enabling programmatic access and integration with external tools.
+
+### Base URL
+
+```
+http://localhost:8001
+```
+
+### Endpoints
+
+| Method | Endpoint | Description | Parameters |
+|---|---|---|---|
+| GET | `/` | Health check | — |
+| GET | `/summary` | High-level KPIs across all data | — |
+| GET | `/cost-by-practice` | Cost breakdown by engineering practice | — |
+| GET | `/tool-stats` | Tool usage counts and success rates | `limit` (int, default 10, max 50) |
+| GET | `/daily-trend` | Daily cost totals over full date range | — |
+| GET | `/forecast` | Linear regression cost forecast | `days` (int, default 7, max 30) |
+| GET | `/anomalies` | Users flagged as anomalous by IsolationForest | — |
+
+### Example requests
+
+```bash
+# Summary KPIs
+curl http://localhost:8001/summary
+
+# Top 5 tools only
+curl "http://localhost:8001/tool-stats?limit=5"
+
+# 14-day forecast
+curl "http://localhost:8001/forecast?days=14"
+
+# Anomalous users
+curl http://localhost:8001/anomalies
+```
+
+### Example response — `/summary`
+
+```json
+{
+  "total_api_calls": 18241,
+  "unique_users": 100,
+  "unique_sessions": 4832,
+  "total_cost_usd": 1423.8821,
+  "total_output_tokens": 8293410,
+  "total_input_tokens": 1847203
+}
+```
+
+### Example response — `/anomalies`
+
+```json
+[
+  {
+    "user_email": "jordan.garcia@example.com",
+    "full_name": "Jordan Garcia",
+    "practice": "Data Engineering",
+    "level": "L5",
+    "total_cost": 42.192,
+    "request_count": 774,
+    "avg_duration": 8534.1,
+    "anomaly_score": 0.211
+  }
+]
+```
+
+### Interactive docs
+
+FastAPI auto-generates a full Swagger UI at `http://localhost:8001/docs` where you can explore and live-test all endpoints directly in the browser using the "Try it out" button — no curl required.
+
+---
+
+## ML & Predictive Analytics
+
+### Cost forecasting — `src/ml.py` → `forecast_cost()`
+
+Uses `sklearn.linear_model.LinearRegression` fitted on historical daily cost totals. Date is encoded as an integer ordinal (days since first event). The 7-day forecast includes a 95% confidence band computed from the residual standard deviation, scaled by the square root of the forecast horizon so uncertainty grows the further out you project.
+
+```python
+# Confidence band grows with horizon
+stds = residuals.std() * sqrt(forecast_horizon)
+lower = max(0, forecast - 1.96 * stds)
+upper = forecast + 1.96 * stds
+```
+
+### Anomaly detection — `src/ml.py` → `detect_anomalies()`
+
+Uses `sklearn.ensemble.IsolationForest` with `contamination=0.08` (flags ~8% of users as anomalous). Features per user:
+
+| Feature | Description |
+|---|---|
+| `total_cost` | Total USD spent across all sessions |
+| `total_input_tokens` | Total input tokens consumed |
+| `total_output_tokens` | Total output tokens produced |
+| `avg_duration_ms` | Average API request duration |
+| `request_count` | Number of API calls made |
+
+The decision function score is negated and shifted so all values are non-negative, then normalized to `[1, 20]` for bubble sizing in the dashboard scatter plot.
+
 ---
 
 ## LLM Usage Log
@@ -211,21 +342,34 @@ This project was built with Claude (claude.ai) as the primary development assist
 
 ### Tools used
 
-- **Claude (claude.ai)** — architecture design, code generation, debugging, documentation
+- **Claude Sonnet 4.6 (claude.ai)** — architecture design, code generation, debugging, documentation
 
 ### Key prompts and how they were used
 
 | Purpose | Prompt (summarized) | Validation method |
 |---|---|---|
-| Data schema design | "Read this generator script and give me the exact nested structure of the JSONL output, then design a flat SQLite schema that captures all meaningful fields" | Cross-checked column names against actual `df.columns` output after ingestion |
-| Ingestion parser | "Write a parser that unwraps CloudWatch log batches from JSONL, flattens attributes/resource/scope into a single row per event, and handles dotted key names" | Ran `python -m src.ingestion` and verified row counts and event type distribution |
-| Analytics functions | "Write aggregation functions for: cost by practice, token breakdown by model, peak usage heatmap, tool success rates, cost by seniority level" | Printed each function's output as a DataFrame before wiring into the dashboard |
-| Dashboard layout | "Build a Streamlit dashboard with sidebar filters for practice and level, a KPI row, and 6 Plotly charts arranged in a 2-column grid" | Ran `streamlit run` and verified all charts rendered with correct axes and labels |
-| Debugging | Pasted full tracebacks (DuplicateColumnError, ValueError on missing column, AttributeError on list) | Confirmed fix by re-running the failing step |
+| Data schema design | "Read this generator script and give me the exact nested structure of the JSONL output, then design a flat SQLite schema that captures all meaningful fields" | Cross-checked column names against actual `df.columns` after ingestion |
+| Ingestion parser | "Write a parser that unwraps CloudWatch log batches from JSONL, flattens attributes/resource/scope into a single row per event, and handles dotted key names" | Ran `python -m src.ingestion`, verified row counts and event type distribution |
+| Analytics functions | "Write aggregation functions for: cost by practice, token breakdown by model, peak usage heatmap, tool success rates, cost by seniority level" | Printed each function's DataFrame output before wiring to dashboard |
+| Dashboard layout | "Build a Streamlit dashboard with sidebar filters for practice and level, a KPI row, and 6 Plotly charts in a 2-column grid" | Ran `streamlit run`, verified all charts rendered with correct axes |
+| ML forecasting | "Add linear regression cost forecasting with a 95% confidence band that widens with forecast horizon" | Checked forecast direction and band shape against historical trend manually |
+| Anomaly detection | "Add IsolationForest anomaly detection per user based on cost, tokens, duration, and request count" | Verified flagged users had visually anomalous positions on the scatter plot |
+| REST API | "Build a FastAPI layer over the analytics functions with endpoints for summary, cost-by-practice, tool-stats, daily-trend, forecast, and anomalies" | Tested each endpoint with curl and via Swagger UI "Try it out" |
+| Debugging | Pasted full tracebacks for 5 distinct errors | Re-ran failing commands after each fix to confirm resolution |
+
+### Bugs fixed with AI assistance
+
+| Error | Root cause | Fix |
+|---|---|---|
+| `DuplicateColumnError: terminal_type` | `**msg["attributes"]` + explicit key both resolved to same column name after rename | Removed redundant explicit key, added `df.columns.duplicated()` guard |
+| `ValueError: 'count' not in columns` | pandas `value_counts().reset_index()` doesn't auto-name the count column in newer versions | Explicit `.columns = [...]` assignment after reset_index |
+| `AttributeError: list has no value_counts` | Line break inside `df[...]` made Python parse `["terminal_type"]` as a standalone list | Moved filter to a temp variable on its own line |
+| `ValueError: Invalid element for scatter size` | IsolationForest scores contain negatives; Plotly requires size ≥ 0 | Shifted scores by `min` in `ml.py`; normalized to `[1, 20]` for bubble sizing |
+| `ModuleNotFoundError: No module named 'database'` | Streamlit uses `src.database`, uvicorn resolves from project root differently | Added `try/except` fallback for both import styles across all `src/` files |
 
 ### Validation approach
 
-All AI-generated code was validated by running it against real generated data and checking that outputs matched expectations — row counts, column names, chart axes, and aggregated totals were spot-checked manually.
+All AI-generated code was validated by running it against real generated data and checking that outputs matched expectations — row counts, column names, chart axes, aggregated totals, forecast direction, and anomaly flag counts were all spot-checked manually before each commit.
 
 ---
 
@@ -236,6 +380,9 @@ streamlit
 pandas
 sqlalchemy
 plotly
+scikit-learn
+fastapi
+uvicorn
 python-dotenv
 faker
 ```
